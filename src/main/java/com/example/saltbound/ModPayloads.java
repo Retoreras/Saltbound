@@ -44,6 +44,27 @@ public final class ModPayloads {
         }
     }
 
+    /** Клиент -> сервер: использовать предмет быстрого слота (индекс = QuickItem.ordinal()). */
+    public record UseQuick(int index) implements CustomPayload {
+        public static final Id<UseQuick> ID = new Id<>(Saltbound.id("use_quick"));
+        public static final PacketCodec<RegistryByteBuf, UseQuick> CODEC = new PacketCodec<>() {
+            @Override
+            public UseQuick decode(RegistryByteBuf buf) {
+                return new UseQuick(buf.readVarInt());
+            }
+
+            @Override
+            public void encode(RegistryByteBuf buf, UseQuick v) {
+                buf.writeVarInt(v.index());
+            }
+        };
+
+        @Override
+        public Id<? extends CustomPayload> getId() {
+            return ID;
+        }
+    }
+
     /** Сервер -> клиент: открыть экран святилища. */
     public record OpenSanctuary() implements CustomPayload {
         public static final Id<OpenSanctuary> ID = new Id<>(Saltbound.id("open_sanctuary"));

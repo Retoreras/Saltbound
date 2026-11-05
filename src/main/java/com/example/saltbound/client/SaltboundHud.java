@@ -34,6 +34,8 @@ public final class SaltboundHud {
     private static final Identifier TEX_ST = tex("st_fill");
     private static final Identifier TEX_FLASK_FULL = tex("flask_full");
     private static final Identifier TEX_FLASK_EMPTY = tex("flask_empty");
+    private static final Identifier TEX_SALT = tex("salt_icon");
+    private static final Identifier TEX_SILVER = tex("silver_icon");
 
     private static Identifier tex(String name) {
         return Identifier.of(Saltbound.MOD_ID, "textures/gui/hud/" + name + ".png");
@@ -41,14 +43,17 @@ public final class SaltboundHud {
 
     // ---- Геометрия в пикселях текстур ----
     private static final int FRAME_W = 584, FRAME_H = 104;
+    // Окна полос в рамке (внутренность, тёмная подложка) и заливки внутри них
+    private static final int HP_WIN_X = 158, HP_WIN_Y = 18, HP_WIN_W = 404, HP_WIN_H = 20;
     private static final int HP_X = 160, HP_Y = 22, HP_W = 400, HP_H = 16;
-    private static final int ST_X = 158, ST_Y = 48, ST_W = 233, ST_H = 11;
+    private static final int ST_WIN_X = 158, ST_WIN_Y = 45, ST_WIN_W = 236, ST_WIN_H = 13;
+    private static final int ST_X = 158, ST_Y = 48, ST_W = 234, ST_H = 10;
     private static final int FLASK_CX = 113, FLASK_CY = 53, FLASK_W = 30, FLASK_H = 45;
     private static final int LEVEL_CX = 51, LEVEL_CY = 56;
     private static final int COUNTER_X = 162, COUNTER_CY = 79, COUNTER_MAX_W = 78;
 
-    private static final int COL_HP_BG = 0xFF1A0C0B;
-    private static final int COL_ST_BG = 0xFF0D1F22;
+    private static final int COL_HP_BG = 0xFF210E0D;
+    private static final int COL_ST_BG = 0xFF0B1A1B;
     private static final int COL_TEXT = 0xFFEFE6D0;
     private static final int COL_TEXT_DIM = 0xFF8F8F86;
 
@@ -56,6 +61,8 @@ public final class SaltboundHud {
     private static float hpTrail = -1f;
     private static float lastHp = -1f;
     private static float trailHold = 0f;
+    // Плавное значение выносливости (сервер присылает его раз в 4 тика)
+    private static float stShown = -1f;
 
     public static void render(DrawContext ctx, RenderTickCounter tick) {
         MinecraftClient mc = MinecraftClient.getInstance();
@@ -72,7 +79,11 @@ public final class SaltboundHud {
         float trailFrac = MathHelper.clamp(hpTrail / maxHp, 0f, 1f);
 
         float maxSt = Math.max(1f, ClientData.maxStamina);
-        float stFrac = MathHelper.clamp(ClientData.stamina / maxSt, 0f, 1f);
+        if (stShown < 0f) {
+            stShown = ClientData.stamina;
+        }
+        stShown += (ClientData.stamina - stShown) * MathHelper.clamp(tick.getLastFrameDuration() * 0.6f, 0f, 1f);
+        float stFrac = MathHelper.clamp(stShown / maxSt, 0f, 1f);
 
         float k = HUD_WIDTH / FRAME_W;
         MatrixStack m = ctx.getMatrices();
@@ -82,8 +93,8 @@ public final class SaltboundHud {
         RenderSystem.enableBlend();
 
         // 1) подложка полос
-        ctx.fill(HP_X, HP_Y, HP_X + HP_W, HP_Y + HP_H, COL_HP_BG);
-        ctx.fill(ST_X, ST_Y, ST_X + ST_W, ST_Y + ST_H, COL_ST_BG);
+        ctx.fill(HP_WIN_X - 1, HP_WIN_Y - 1, HP_WIN_X + HP_WIN_W + 1, HP_WIN_Y + HP_WIN_H, COL_HP_BG);
+        ctx.fill(ST_WIN_X - 1, ST_WIN_Y - 1, ST_WIN_X + ST_WIN_W + 1, ST_WIN_Y + ST_WIN_H, COL_ST_BG);
 
         // 2) след урона
         int hpPx = Math.round(HP_W * hpFrac);
@@ -148,12 +159,24 @@ public final class SaltboundHud {
 
         m.pop();
 
-        // ---- соль и серебро (слева внизу, пока простым видом)
-        int sy = ctx.getScaledWindowHeight() - 32;
-        ctx.fill(10, sy + 1, 18, sy + 9, 0xFFD9C27A);
-        ctx.drawTextWithShadow(tr, String.valueOf(s.salt()), 24, sy + 1, COL_TEXT);
-        ctx.fill(10, sy + 13, 18, sy + 21, 0xFFB4B2A9);
-        ctx.drawTextWithShadow(tr, String.valueOf(ClientData.silver), 24, sy + 13, COL_TEXT);
+        // ---- соль и серебро (слева внизу): иконки и числа
+        int sy = ctx.getScaledWindowHeight() - 34;
+        drawIcon(ctx, TEX_SALT, 8, sy, 14);
+        ctx.drawTextWithShadow(tr, String.valueOf(s.salt()), 26, sy + 3, COL_TEXT);
+        drawIcon(ctx, TEX_SILVER, 8, sy + 16, 14);
+        ctx.drawTextWithShadow(tr, String.valueOf(ClientData.silver), 26, sy + 19, COL_TEXT);
+    }
+
+    /** Рисует квадратную иконку 48x48 в заданном размере (в единицах GUI). */
+    private static void drawIcon(DrawContext ctx, Identifier tex, int x, int y, int size) {
+        MatrixStack m = ctx.getMatrices();
+        m.push();
+        m.translate(x, y, 0);
+        float k = size / 48f;
+        m.scale(k, k, 1f);
+        RenderSystem.enableBlend();
+        ctx.drawTexture(tex, 0, 0, 0, 0, 48, 48, 48, 48);
+        m.pop();
     }
 
     private static void updateTrail(float hp, float maxHp, float dt) {

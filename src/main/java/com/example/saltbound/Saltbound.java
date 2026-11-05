@@ -43,6 +43,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
+import net.minecraft.stat.Stats;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
@@ -61,8 +62,11 @@ public class Saltbound implements ModInitializer {
     public static final String MOD_ID = "saltbound";
 
     // ---- Баланс (меняй под себя) ----
-    public static final float ATTACK_COST = 8f;
-    public static final float ROLL_COST = 20f;
+    public static final float ATTACK_COST = 10f;
+    public static final float ROLL_COST = 25f;
+    public static final float SPRINT_COST_PER_TICK = 0.3f;   // бег: 6 в секунду, ~16 сек с полной шкалы
+    public static final float JUMP_COST = 5f;                // прыжок
+    public static final float EXHAUST_RECOVER = 20f;         // после истощения бег снова доступен при таком запасе
     public static final int REGEN_DELAY = 25;      // тики паузы перед восстановлением выносливости
     public static final int ROLL_IFRAMES = 10;     // тики неуязвимости при перекате
     public static final int ROLL_COOLDOWN = 12;
@@ -115,6 +119,8 @@ public class Saltbound implements ModInitializer {
         BlockPos sanctuary;
         boolean airDashUsed;
         int drinkTicks;
+        boolean exhausted;
+        int lastJumps = -1;
     }
 
     private static final Map<UUID, Runtime> RUNTIME = new HashMap<>();
@@ -203,6 +209,7 @@ public class Saltbound implements ModInitializer {
             }
             runtime(newPlayer).stamina = -1;
             runtime(newPlayer).drinkTicks = 0;
+            runtime(newPlayer).exhausted = false;
             sync(newPlayer);
         });
 
@@ -345,6 +352,36 @@ public class Saltbound implements ModInitializer {
         if (rt.iframes > 0) rt.iframes--;
         if (rt.rollCooldown > 0) rt.rollCooldown--;
         if (p.isOnGround()) rt.airDashUsed = false;
+
+        // Расход выносливости на бег и прыжки (в творческом режиме не тратится)
+        if (!p.isCreative()) {
+            if (p.isSprinting() && !p.hasVehicle()) {
+                rt.stamina = Math.max(0f, rt.stamina - SPRINT_COST_PER_TICK);
+                rt.regenDelay = Math.max(rt.regenDelay, REGEN_DELAY);
+                if (rt.stamina <= 0f) {
+                    rt.exhausted = true;
+                }
+            }
+            int jumps = p.getStatHandler().getStat(Stats.CUSTOM.getOrCreateStat(Stats.JUMP));
+            if (rt.lastJumps < 0) {
+                rt.lastJumps = jumps;
+            }
+            if (jumps > rt.lastJumps) {
+                rt.stamina = Math.max(0f, rt.stamina - JUMP_COST * (jumps - rt.lastJumps));
+                rt.regenDelay = Math.max(rt.regenDelay, REGEN_DELAY);
+                rt.lastJumps = jumps;
+                if (rt.stamina <= 0f) {
+                    rt.exhausted = true;
+                }
+            }
+        } else {
+            rt.exhausted = false;
+        }
+        if (rt.exhausted && rt.stamina >= EXHAUST_RECOVER) {
+            rt.exhausted = false;
+        }
+        // Истощён: бег не даёт ускорения (скорость как при ходьбе), пока не восстановится запас
+        setExhaustedSlow(p, rt.exhausted && p.isSprinting());
         if (rt.drinkTicks > 0) {
             rt.drinkTicks--;
             if (rt.drinkTicks == 0) {
@@ -622,6 +659,21 @@ public class Saltbound implements ModInitializer {
     private static void cancelDrinking(ServerPlayerEntity p, Runtime rt) {
         rt.drinkTicks = 0;
         setDrinkSlow(p, false);
+    }
+
+    /** Гасит прибавку скорости от бега (+30%): 1.3 * (1 - 0.2308) = 1.0. */
+    private static void setExhaustedSlow(ServerPlayerEntity p, boolean on) {
+        EntityAttributeInstance inst = p.getAttributeInstance(EntityAttributes.GENERIC_MOVEMENT_SPEED);
+        if (inst == null) {
+            return;
+        }
+        Identifier modId = id("exhausted");
+        boolean has = inst.hasModifier(modId);
+        if (on && !has) {
+            inst.addTemporaryModifier(new EntityAttributeModifier(modId, -0.2308, EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+        } else if (!on && has) {
+            inst.removeModifier(modId);
+        }
     }
 
     private static void setDrinkSlow(ServerPlayerEntity p, boolean on) {
